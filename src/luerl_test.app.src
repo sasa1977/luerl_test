@@ -1,0 +1,13 @@
+{application, luerl_test,
+ [
+  {description, ""},
+  {vsn, "1"},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib,
+                  luerl
+                 ]},
+  {mod, { luerl_test_app, []}},
+  {env, []}
+ ]}.

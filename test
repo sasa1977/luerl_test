@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+./rebar get-deps compile
+./test.escript
