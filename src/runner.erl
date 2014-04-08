@@ -2,7 +2,6 @@
 -export([run/0]).
 
 -define(RUNS, 100000).
--define(PARALLEL_WORKERS, 8).
 
 program() ->
   <<"
@@ -30,17 +29,17 @@ runner(State) ->
   end,
   runner(State).
 
-setup_parallel_workers(State) ->
+setup_parallel_workers(PoolSize, State) ->
   list_to_tuple(
-    [spawn(fun() -> runner(State) end) || _ <- lists:seq(1,?PARALLEL_WORKERS)]
+    [spawn(fun() -> runner(State) end) || _ <- lists:seq(1,PoolSize)]
   ).
 
-exec_parallel(0, _RunnerPids, _Code) ->
+exec_parallel(0, _PoolSize, _RunnerPids, _Code) ->
   await(?RUNS);
 
-exec_parallel(N, RunnerPids, Code) ->
-  element(N rem ?PARALLEL_WORKERS + 1, RunnerPids) ! {exec, self(), Code},
-  exec_parallel(N-1, RunnerPids, Code).
+exec_parallel(N, PoolSize, RunnerPids, Code) ->
+  element(N rem PoolSize + 1, RunnerPids) ! {exec, self(), Code},
+  exec_parallel(N-1, PoolSize, RunnerPids, Code).
 
 await(0) -> ok;
 await(N) ->
@@ -89,17 +88,23 @@ run() ->
         end
       ),
   io:format("~.2f runs/sec [sequential]~n", [?RUNS * 1000000 / Microsec]),
-  RunnerPids = setup_parallel_workers(InitialState),
-  {MicrosecParallel, _} =
-    timer:tc(
-        fun() ->
-          exec_parallel(
-            ?RUNS,
-            RunnerPids,
-            fun(State) ->
-              element(1, luerl:call_function([fac], [50], State))
-            end
-          )
-        end
-      ),
-  io:format("~.2f runs/sec [parallel]~n", [?RUNS * 1000000 / MicrosecParallel]).
+  lists:foreach(
+        fun(PoolSize) ->
+          RunnerPids = setup_parallel_workers(PoolSize, InitialState),
+          {MicrosecParallel, _} =
+            timer:tc(
+                fun() ->
+                  exec_parallel(
+                    ?RUNS,
+                    PoolSize,
+                    RunnerPids,
+                    fun(State) ->
+                      element(1, luerl:call_function([fac], [50], State))
+                    end
+                  )
+                end
+              ),
+          io:format("~.2f runs/sec [parallel/~p]~n", [?RUNS * 1000000 / MicrosecParallel, PoolSize])
+        end,
+        [1, 2, 6, 12, 24, 48, 100, 1000, 2000]
+      ).
