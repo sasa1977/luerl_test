@@ -1,4 +1,9 @@
 #!/usr/bin/env escript
+%% -*- erlang -*-
+%%! -smp enable
+
+-define(RUNS, 100000).
+-define(PARALLEL_WORKERS, 10).
 
 program() ->
   <<"
@@ -14,12 +19,57 @@ program() ->
     end
   ">>.
 
+
+%% ------------------------------------------------------------------
+%% Parallel setup
+%% ------------------------------------------------------------------
+
+runner(ReturnPid) ->
+  receive
+    {ok, Code} ->
+      Code(),
+      runner(ReturnPid);
+    stop ->
+      ReturnPid ! done
+  end.
+
+setup_parallel_workers() ->
+  Me = self(),
+  [spawn(fun() -> runner(Me) end) || _ <- lists:seq(1,?PARALLEL_WORKERS)].
+
+exec_parallel(N, RunnerPids, Code) ->
+  exec_parallel(N, RunnerPids, [], Code).
+
+exec_parallel(N, [], RunnerPids, Code) ->
+  exec_parallel(N, RunnerPids, [], Code);
+exec_parallel(0, RunnerPids1, RunnerPids2, _Code) ->
+  AllPids = RunnerPids1 ++ RunnerPids2,
+  [Pid ! stop || Pid <- AllPids],
+  await(length(AllPids));
+exec_parallel(N, [Pid | Rest], AccPids, Code) ->
+  Pid ! {ok, Code},
+  exec_parallel(N-1, Rest, [Pid|AccPids], Code).
+
+await(0) -> ok;
+await(N) ->
+  receive
+    done -> await(N-1)
+  end.
+
+
+%% ------------------------------------------------------------------
+%% Serial setup
+%% ------------------------------------------------------------------
+
 exec(0, _) -> ok;
 exec(N, Code) ->
   Code(),
   exec(N-1, Code).
 
--define(RUNS, 100000).
+
+%% ------------------------------------------------------------------
+%% Main measurement loop
+%% ------------------------------------------------------------------
 
 main(_Args) ->
   [code:add_path(Path) || Path <- filelib:wildcard("./deps/**/ebin")],
@@ -46,4 +96,16 @@ main(_Args) ->
           )
         end
       ),
-  io:format("~.2f runs/sec~n", [?RUNS * 1000000 / Microsec]).
+  io:format("~.2f runs/sec [sequential]~n", [?RUNS * 1000000 / Microsec]),
+  RunnerPids = setup_parallel_workers(),
+  {MicrosecParallel, _} =
+    timer:tc(
+        fun() ->
+          exec_parallel(
+            ?RUNS,
+            RunnerPids,
+            fun() -> luerl:call_function([fac], [50], State) end
+          )
+        end
+      ),
+  io:format("~.2f runs/sec [parallel]~n", [?RUNS * 1000000 / MicrosecParallel]).
